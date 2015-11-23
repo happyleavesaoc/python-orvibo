@@ -10,7 +10,7 @@ args = parser.parse_args()
 
 s20 = S20(args.server)
 if args.status:
-    print("Switch is on" if s20.on else "Switch is off")
+    print("ON" if s20.on else "OFF")
 else:
     if args.operation and args.operation.upper() == 'ON':
         s20.on = True

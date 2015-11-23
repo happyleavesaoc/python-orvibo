@@ -19,7 +19,6 @@ There is also a command line version to achieve the same, e.g.
 python cmd.py --server 1.2.3.4 --switch off
 python cmd.py --server 1.2.3.4 --switch on
 python cmd.py --server 1.2.3.4 --status
-	Switch is on
 ```
 
 ## Contributions
