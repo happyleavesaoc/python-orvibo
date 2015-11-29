@@ -1,5 +1,6 @@
 """ Orbivo S20. """
 
+import binascii
 import logging
 import socket
 
@@ -10,7 +11,8 @@ PORT = 10000
 
 # UDP best-effort.
 RETRIES = 3
-TIMEOUT = 0.5
+TIMEOUT = 1.0
+DISCOVERY_TIMEOUT = 1.0
 
 # Packet constants.
 MAGIC = b'\x68\x64'
@@ -24,6 +26,30 @@ PADDING_1 = b'\x20\x20\x20\x20\x20\x20'
 PADDING_2 = b'\x00\x00\x00\x00'
 ON = b'\x01'
 OFF = b'\x00'
+
+
+def _is_discovery_response(data):
+    """ Is this a discovery response?
+
+    :param data: Payload.
+    """
+    return data[0:6] == (MAGIC + DISCOVERY_RESP)
+
+
+def _is_subscribe_response(data):
+    """ Is this a subscribe response?
+
+    :param data: Payload.
+    """
+    return data[0:6] == (MAGIC + SUBSCRIBE_RESP)
+
+
+def _is_control_response(data):
+    """ Is this a control response?
+
+    :param data: Payload.
+    """
+    return data[0:6] == (MAGIC + CONTROL_RESP)
 
 
 class S20Exception(Exception):
@@ -45,7 +71,9 @@ class S20(object):
         """
         self.host = host
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for opt in [socket.SO_BROADCAST, socket.SO_REUSEADDR,
+                    socket.SO_REUSEPORT]:
+            self._socket.setsockopt(socket.SOL_SOCKET, opt, 1)
         self._socket.bind(('', PORT))
         (self._mac, self._mac_reversed) = self._discover_mac()
 
@@ -75,16 +103,19 @@ class S20(object):
         All configured devices reply. The response contains
         the MAC address in both needed formats.
 
+        Discovery of multiple switches must be done synchronously.
+
         :returns: Tuple of MAC address and reversed MAC address.
         """
         mac = None
         mac_reversed = None
         cmd = MAGIC + DISCOVERY
         resp = self._udp_transact(cmd, self._discovery_resp,
-                                  broadcast=True, timeout=1.0)
+                                  broadcast=True,
+                                  timeout=DISCOVERY_TIMEOUT)
         if resp:
             (mac, mac_reversed) = resp
-        if not mac:
+        if mac is None:
             raise S20Exception("Couldn't discover {}".format(self.host))
         return (mac, mac_reversed)
 
@@ -120,68 +151,43 @@ class S20(object):
                 "Device didn't acknowledge control request: {}".format(
                     self.host))
 
-    def _discovery_resp(self, data, addr):
+    def _discovery_resp(self, data):
         """ Handle a discovery response.
 
         :param data: Payload.
         :param addr: Address tuple.
-        :returns: MAC address tuple.
+        :returns: MAC and reversed MAC.
         """
-        if self._is_discovery_response(data, addr):
-            _LOGGER.debug("Discovered MAC of %s", self.host)
+        if _is_discovery_response(data):
+            _LOGGER.debug("Discovered MAC of %s: %s", self.host,
+                          binascii.hexlify(data[7:13]).decode())
             return (data[7:13], data[19:25])
-        return (None, None)
 
-    def _subscribe_resp(self, data, addr):
+    def _subscribe_resp(self, data):
         """ Handle a subscribe response.
 
         :param data: Payload.
-        :param addr: Address tuple.
         :returns: State (ON/OFF)
         """
-        if self._is_subscribe_response(data, addr):
+        if _is_subscribe_response(data):
             status = bytes([data[23]])
             _LOGGER.debug("Successfully subscribed to %s, state: %s",
                           self.host, ord(status))
             return status
 
-    def _control_resp(self, data, addr, state):
+    def _control_resp(self, data, state):
         """ Handle a control response.
 
         :param data: Payload.
-        :param addr: Address tuple.
-        :param state: Acknowledged state.
+        :param state: Requested state.
+        :returns: Acknowledged state.
         """
-        if self._is_control_response(data, addr):
+        if _is_control_response(data):
             ack_state = bytes([data[22]])
             if state == ack_state:
                 _LOGGER.debug("Received state ack from %s, state: %s",
                               self.host, ord(ack_state))
                 return ack_state
-
-    def _is_discovery_response(self, data, addr):
-        """ Is this a discovery response?
-
-        :param data: Payload.
-        :param addr: Address tuple.
-        """
-        return data[0:6] == (MAGIC + DISCOVERY_RESP) and addr[0] == self.host
-
-    def _is_subscribe_response(self, data, addr):
-        """ Is this a subscribe response?
-
-        :param data: Payload.
-        :param addr: Address tuple.
-        """
-        return data[0:6] == (MAGIC + SUBSCRIBE_RESP) and addr[0] == self.host
-
-    def _is_control_response(self, data, addr):
-        """ Is this a control response?
-
-        :param data: Payload.
-        :param addr: Address tuple.
-        """
-        return data[0:6] == (MAGIC + CONTROL_RESP) and addr[0] == self.host
 
     def _udp_transact(self, payload, handler, *args,
                       broadcast=False, timeout=TIMEOUT):
@@ -208,7 +214,9 @@ class S20(object):
             while True:
                 try:
                     data, addr = self._socket.recvfrom(1024)
-                    retval = handler(data, addr, *args)
+                    # From the right device?
+                    if addr[0] == self.host:
+                        retval = handler(data, *args)
                 except socket.timeout:
                     break
             if retval:
