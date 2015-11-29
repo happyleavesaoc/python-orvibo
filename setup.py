@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='orvibo',
-    version='1.0.0',
+    version='1.0.1',
     description='Control Orvibo products.',
     url='https://github.com/happyleavesaoc/python-orvibo/',
     license='MIT',
