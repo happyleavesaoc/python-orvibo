@@ -3,6 +3,7 @@
 import binascii
 import logging
 import socket
+import time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +27,9 @@ PADDING_1 = b'\x20\x20\x20\x20\x20\x20'
 PADDING_2 = b'\x00\x00\x00\x00'
 ON = b'\x01'
 OFF = b'\x00'
+
+# Timeout after which to renew device subscriptions
+SUBSCRIPTION_TIMEOUT = 60
 
 
 def _is_discovery_response(data):
@@ -76,6 +80,8 @@ class S20(object):
             self._socket.setsockopt(socket.SOL_SOCKET, opt, 1)
         self._socket.bind(('', PORT))
         (self._mac, self._mac_reversed) = self._discover_mac()
+
+        self._subscribe()
 
     @property
     def on(self):
@@ -131,10 +137,14 @@ class S20(object):
             + PADDING_1 + self._mac_reversed + PADDING_1
         status = self._udp_transact(cmd, self._subscribe_resp)
         if status is not None:
+            self.last_subscribed = time.time()
             return status == ON
         else:
             raise S20Exception(
                 "No status could be found for {}".format(self.host))
+
+    def _subscription_is_recent(self):
+        return self.last_subscribed > time.time() - SUBSCRIPTION_TIMEOUT
 
     def _control(self, state):
         """ Control device state.
@@ -143,6 +153,11 @@ class S20(object):
 
         :param state: Switch to this state.
         """
+
+        # Renew subscription if necessary
+        if not self._subscription_is_recent():
+            self._subscribe()
+
         cmd = MAGIC + CONTROL + self._mac + PADDING_1 + PADDING_2 + state
         _LOGGER.debug("Sending new state to %s: %s", self.host, ord(state))
         ack_state = self._udp_transact(cmd, self._control_resp, state)
@@ -217,18 +232,16 @@ class S20(object):
                     # From the right device?
                     if addr[0] == self.host:
                         retval = handler(data, *args)
+                    # Return as soon as a response is received
+                    if retval:
+                        return retval
                 except socket.timeout:
                     break
-            if retval:
-                break
-        return retval
 
     def _turn_on(self):
         """ Turn on the device. """
-        if not self._subscribe():
-            self._control(ON)
+        self._control(ON)
 
     def _turn_off(self):
         """ Turn off the device. """
-        if self._subscribe():
-            self._control(OFF)
+        self._control(OFF)
