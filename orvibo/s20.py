@@ -217,11 +217,11 @@ class S20(object):
                     # From the right device?
                     if addr[0] == self.host:
                         retval = handler(data, *args)
+                    # Return as soon as a response is received
+                    if retval:
+                        return retval
                 except socket.timeout:
                     break
-            if retval:
-                break
-        return retval
 
     def _turn_on(self):
         """ Turn on the device. """
