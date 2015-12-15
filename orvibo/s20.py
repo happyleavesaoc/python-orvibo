@@ -3,6 +3,7 @@
 import binascii
 import logging
 import socket
+import threading
 import time
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,6 +15,9 @@ PORT = 10000
 RETRIES = 3
 TIMEOUT = 1.0
 DISCOVERY_TIMEOUT = 1.0
+
+# Timeout after which to renew device subscriptions
+SUBSCRIPTION_TIMEOUT = 60
 
 # Packet constants.
 MAGIC = b'\x68\x64'
@@ -28,8 +32,50 @@ PADDING_2 = b'\x00\x00\x00\x00'
 ON = b'\x01'
 OFF = b'\x00'
 
-# Timeout after which to renew device subscriptions
-SUBSCRIPTION_TIMEOUT = 60
+# Socket
+_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+# Buffer
+_BUFFER = {}
+
+
+def _listen():
+    """ Listen on socket. """
+    while True:
+        data, addr = _SOCKET.recvfrom(1024)
+        _BUFFER[addr[0]] = data
+
+
+def _setup():
+    """ Set up module.
+
+    Open a UDP socket, and listen in a thread.
+    """
+    for opt in [socket.SO_BROADCAST, socket.SO_REUSEADDR, socket.SO_REUSEPORT]:
+        _SOCKET.setsockopt(socket.SOL_SOCKET, opt, 1)
+    _SOCKET.bind(('', PORT))
+    udp = threading.Thread(target=_listen, daemon=True)
+    udp.start()
+
+
+def discover(timeout=DISCOVERY_TIMEOUT):
+    """ Discover devices on the local network.
+
+    :param timeout: Optional timeout in seconds.
+    :returns: Set of discovered host addresses.
+    """
+    hosts = set()
+    payload = MAGIC + DISCOVERY
+    for _ in range(RETRIES):
+        _SOCKET.sendto(bytearray(payload), ('255.255.255.255', PORT))
+        start = time.time()
+        while time.time() < start + timeout:
+            for host, data in _BUFFER.copy().items():
+                if _is_discovery_response(data):
+                    if host not in hosts:
+                        _LOGGER.debug("Discovered device at %s", host)
+                    hosts.add(host)
+    return hosts
 
 
 def _is_discovery_response(data):
@@ -74,13 +120,7 @@ class S20(object):
         :param host: IP or hostname of device.
         """
         self.host = host
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        for opt in [socket.SO_BROADCAST, socket.SO_REUSEADDR,
-                    socket.SO_REUSEPORT]:
-            self._socket.setsockopt(socket.SOL_SOCKET, opt, 1)
-        self._socket.bind(('', PORT))
         (self._mac, self._mac_reversed) = self._discover_mac()
-
         self._subscribe()
 
     @property
@@ -144,6 +184,10 @@ class S20(object):
                 "No status could be found for {}".format(self.host))
 
     def _subscription_is_recent(self):
+        """ Check if subscription occurred recently.
+
+        :returns: Yes (True) or no (False)
+        """
         return self.last_subscribed > time.time() - SUBSCRIPTION_TIMEOUT
 
     def _control(self, state):
@@ -219,24 +263,22 @@ class S20(object):
         :param broadcast: Send a broadcast instead.
         :param timeout: Timeout in seconds.
         """
+        if self.host in _BUFFER:
+            del _BUFFER[self.host]
         host = self.host
         if broadcast:
             host = '255.255.255.255'
         retval = None
-        self._socket.settimeout(timeout)
         for _ in range(RETRIES):
-            self._socket.sendto(bytearray(payload), (host, PORT))
-            while True:
-                try:
-                    data, addr = self._socket.recvfrom(1024)
-                    # From the right device?
-                    if addr[0] == self.host:
-                        retval = handler(data, *args)
-                    # Return as soon as a response is received
-                    if retval:
-                        return retval
-                except socket.timeout:
-                    break
+            _SOCKET.sendto(bytearray(payload), (host, PORT))
+            start = time.time()
+            while time.time() < start + timeout:
+                data = _BUFFER.get(self.host, None)
+                if data:
+                    retval = handler(data, *args)
+                # Return as soon as a response is received
+                if retval:
+                    return retval
 
     def _turn_on(self):
         """ Turn on the device. """
@@ -245,3 +287,6 @@ class S20(object):
     def _turn_off(self):
         """ Turn off the device. """
         self._control(OFF)
+
+
+_setup()
