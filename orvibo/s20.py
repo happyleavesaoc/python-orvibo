@@ -137,7 +137,10 @@ class S20(object):
         if not mac:
             (self._mac, self._mac_reversed) = self._discover_mac()
         else:
-            self._mac = binascii.a2b_hex(''.join(mac.split(':')))
+            if type(mac) is str:
+                self._mac = binascii.a2b_hex(''.join(mac.split(':')))
+            else:
+                self._mac = mac
             ba = bytearray(self._mac)
             ba.reverse()
             self._mac_reversed = bytes(ba)
