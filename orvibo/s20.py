@@ -1,6 +1,7 @@
 """ Orbivo S20. """
 
 import binascii
+import struct
 import logging
 import socket
 import threading
@@ -57,23 +58,36 @@ def _setup():
     udp.start()
 
 
+def _device_time(tab):
+    ts = struct.unpack('<L', tab)[0] - 2208988800
+    return ts
+
+
 def discover(timeout=DISCOVERY_TIMEOUT):
     """ Discover devices on the local network.
 
     :param timeout: Optional timeout in seconds.
     :returns: Set of discovered host addresses.
     """
-    hosts = set()
+    hosts = {}
     payload = MAGIC + DISCOVERY
     for _ in range(RETRIES):
         _SOCKET.sendto(bytearray(payload), ('255.255.255.255', PORT))
         start = time.time()
         while time.time() < start + timeout:
             for host, data in _BUFFER.copy().items():
-                if _is_discovery_response(data):
-                    if host not in hosts:
-                        _LOGGER.debug("Discovered device at %s", host)
-                    hosts.add(host)
+                if not _is_discovery_response(data):
+                    continue
+                if host not in hosts:
+                    _LOGGER.debug("Discovered device at %s", host)
+                    entry = {}
+                    entry['mac'] = data[7:13]
+                    entry['imac'] = data[19:25]
+                    entry['next'] = 0
+                    entry['st'] = int(data[-1])
+                    entry['time'] = _device_time(data[37:41])
+                    entry['serverTime'] = int(time.time())
+                    hosts[host] = entry
     return hosts
 
 
@@ -113,13 +127,22 @@ class S20(object):
 
     Protocol documentation: http://pastebin.com/LfUhsbcS
     """
-    def __init__(self, host):
+    def __init__(self, host, mac = None):
         """ Initialize S20 object.
 
         :param host: IP or hostname of device.
         """
         self.host = host
-        (self._mac, self._mac_reversed) = self._discover_mac()
+        if not mac:
+            (self._mac, self._mac_reversed) = self._discover_mac()
+        else:
+            if type(mac) is str:
+                self._mac = binascii.a2b_hex(''.join(mac.split(':')))
+            else:
+                self._mac = mac
+            ba = bytearray(self._mac)
+            ba.reverse()
+            self._mac_reversed = bytes(ba)
         self._subscribe()
 
     @property
