@@ -51,8 +51,7 @@ def _setup():
 
     Open a UDP socket, and listen in a thread.
     """
-    for opt in [socket.SO_BROADCAST, socket.SO_REUSEADDR, socket.SO_REUSEPORT]:
-        _SOCKET.setsockopt(socket.SOL_SOCKET, opt, 1)
+    _SOCKET.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     _SOCKET.bind(('', PORT))
     udp = threading.Thread(target=_listen, daemon=True)
     udp.start()
