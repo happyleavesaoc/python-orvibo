@@ -22,7 +22,7 @@ python cmd.py --server 1.2.3.4 --status
 ```
 
 There is also a HTTP Server version .
-
+```
 OrviboHTTPServer <ip to bind to> <port to listen to>
 
 Commands can then be given through HTTP GET requests in the openHAB http binding:
@@ -30,7 +30,7 @@ Commands can then be given through HTTP GET requests in the openHAB http binding
 <ip to bind to>:<port to listen to>/STATUS/<ip of plug>
 <ip to bind to>:<port to listen to>/ON/<ip of plug>
 <ip to bind to>:<port to listen to>/OFF/<ip of plug>
-
+```
 
 ## Contributions
 
