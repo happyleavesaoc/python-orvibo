@@ -136,7 +136,7 @@ class S20(object):
         if not mac:
             (self._mac, self._mac_reversed) = self._discover_mac()
         else:
-            if type(mac) is str:
+            if isinstance(mac, str):
                 self._mac = binascii.a2b_hex(''.join(mac.split(':')))
             else:
                 self._mac = mac
